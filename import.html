@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>นำเข้าข้อมูล · MASARU Shopee</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="assets/common.js"></script>
+<script src="assets/parsers.js"></script>
+</head>
+<body>
+<script>
+const TABLE = { sales:'shopee_sales', expense:'shopee_expense', offsys:'shopee_offsys' };
+const KIND_TH = { sales:'ยอดขาย', expense:'ค่าใช้จ่าย', offsys:'รายรับนอกระบบ' };
+let PENDING = [], REPORT = null, BUSY = false;
+
+function render(){
+  const files = PENDING.map((p, i) => fileCard(p, i)).join('');
+  $('#view').innerHTML = `
+    <div class="panel"><div class="panel-h"><h3>อัปโหลดไฟล์ Excel</h3>
+      <span class="hint">ลากไฟล์มาวางหรือคลิกเพื่อเลือก · หลายไฟล์พร้อมกันได้</span></div>
+      <div class="panel-b">
+        <div class="drop" id="drop" onclick="document.getElementById('fin').click()">
+          <div class="big">วางไฟล์ที่นี่</div>
+          <div class="sm">Data ยอดขาย · ค่าใช้จ่ายทีม · สรุปรายรับนอกระบบ &nbsp;(.xlsx / .xls / .csv)</div>
+        </div>
+        <input type="file" id="fin" class="hidden" multiple accept=".xlsx,.xls,.csv" onchange="stage(this.files)">
+        <div class="filelist">${files}</div>
+        ${PENDING.length ? `<div style="margin-top:14px;display:flex;gap:8px;align-items:center">
+          <button class="btn p" id="goBtn" onclick="run()" ${BUSY ? 'disabled' : ''}>อัปโหลดขึ้นฐานข้อมูลทีม (${PENDING.length} ไฟล์)</button>
+          <button class="btn" onclick="PENDING=[];render()" ${BUSY ? 'disabled' : ''}>ล้างรายการ</button></div>
+          <div id="prog"></div>` : ''}
+        ${REPORT || ''}
+        <div class="warn" style="margin-top:14px;margin-bottom:0"><b>อัปไฟล์ซ้ำไม่ทำให้ยอดบวกซ้ำ</b> —
+          ระบบสร้างรหัสประจำแถวจากเนื้อหาแล้วเขียนทับแถวเดิม ถ้าแก้ไฟล์แล้วอัปใหม่ ข้อมูลจะอัปเดตตาม</div>
+      </div></div>
+
+    <div class="panel"><div class="panel-h"><h3>ข้อมูลที่มีอยู่ในฐานข้อมูลทีม</h3>
+      <div class="tbl-tools"><button class="btn" onclick="refreshStatus()">รีเฟรช</button></div></div>
+      <div class="panel-b"><div class="status-grid" id="stat">${statusCards()}</div></div></div>
+
+    <div class="panel"><div class="panel-h"><h3>ประวัติการนำเข้า 20 ครั้งล่าสุด</h3></div>
+      <div class="tw" id="hist"><div style="padding:20px;color:var(--muted)">กำลังโหลด…</div></div></div>`;
+  loadHistory();
+}
+
+function statusCards(){
+  const meta = [
+    ['ยอดขาย Shopee', 'sales'],
+    ['ค่าใช้จ่ายทีม', 'expense'],
+    ['รายรับนอกระบบ', 'offsys']
+  ];
+  return meta.map(([t, k]) => {
+    const r = RANGE[k] || {};
+    return `<div class="stat-card"><div class="t">${t}</div>
+      <div class="l"><span>จำนวนแถว</span><b>${num(r.rows || 0)}</b></div>
+      <div class="l"><span>วันแรก</span><b>${r.dmin ? thDate(r.dmin) : '—'}</b></div>
+      <div class="l"><span>วันล่าสุด</span><b>${r.dmax ? thDate(r.dmax) : '—'}</b></div>
+      <div style="margin-top:9px"><button class="btn sm" onclick="clearTable('${k}','${t}')">ล้างข้อมูลส่วนนี้</button></div>
+    </div>`;
+  }).join('');
+}
+async function refreshStatus(){
+  try { await loadDims(true); $('#stat').innerHTML = statusCards(); toast('อัปเดตสถานะแล้ว', 'ok'); }
+  catch (e) { toast(e.message, 'err'); }
+}
+async function loadHistory(){
+  try {
+    const rows = await SB.select('shopee_imports', 'select=*&order=created_at.desc&limit=20');
+    const el = $('#hist'); if (!el) return;
+    el.innerHTML = rows.length ? `<table><thead><tr>
+        <th class="na">เวลา</th><th class="na">ชนิด</th><th class="na">ไฟล์</th>
+        <th class="na">ชีท</th><th class="na num">แถว</th><th class="na num">ข้าม</th><th class="na">โดย</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${new Date(r.created_at).toLocaleString('th-TH')}</td>
+        <td><span class="chip b">${esc(KIND_TH[r.kind] || r.kind)}</span></td>
+        <td>${esc(r.file_name)}</td><td>${esc(r.sheets || '')}</td>
+        <td class="num">${num(r.rows_in)}</td>
+        <td class="num">${r.rows_skip ? `<span class="chip r">${num(r.rows_skip)}</span>` : '0'}</td>
+        <td>${esc(r.by_email || '')}</td></tr>`).join('')}</tbody></table>`
+      : `<div style="padding:20px;color:var(--muted)">ยังไม่มีประวัติ</div>`;
+  } catch (e) { const el = $('#hist'); if (el) el.innerHTML = `<div style="padding:16px"><div class="err">${esc(e.message)}</div></div>`; }
+}
+
+function fileCard(p, i){
+  const sheets = p.sheets.map((s, si) =>
+    `<label><input type="checkbox" ${s.on ? 'checked' : ''} onchange="toggleSheet(${i},${si},this.checked)">
+      <span><b>${esc(s.name)}</b> ${s.note ? `<span class="chip ${/ซ้ำ/.test(s.note) ? 'r' : 'b'}">${esc(s.note)}</span>` : ''}</span></label>`).join('');
+  return `<div class="fitem">
+    <div class="row1">
+      <span class="chip ${p.kind === 'sales' ? 'b' : p.kind === 'expense' ? 'g' : 'r'}">${KIND_TH[p.kind]}</span>
+      <span class="nm">${esc(p.name)}</span>
+      <select onchange="setKind(${i},this.value)">
+        ${Object.keys(KIND_TH).map(k => `<option value="${k}" ${p.kind === k ? 'selected' : ''}>${KIND_TH[k]}</option>`).join('')}
+      </select>
+      <button class="btn sm" onclick="PENDING.splice(${i},1);render()">ลบ</button>
+    </div>
+    <div class="sheetpick">
+      <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:3px">เลือกชีทที่จะนำเข้า</div>
+      ${sheets}
+      ${p.kind === 'expense' ? `<div class="warn" style="margin:8px 0 0">ชีท <b>ACC</b> มีข้อมูลเดียวกับ <b>Ads เดือน 2–7</b> ทุกบาท ระบบจึงติ๊กชีทที่ซ้ำออกให้แล้ว</div>` : ''}
+    </div></div>`;
+}
+function setKind(i, v){ PENDING[i].kind = v; PENDING[i].sheets = defaultSheets(PENDING[i].wb, v); render(); }
+function toggleSheet(i, si, on){ PENDING[i].sheets[si].on = on; }
+
+function stage(files){
+  const list = [...files];
+  if (!list.length) return;
+  let done = 0;
+  for (const f of list){
+    const fr = new FileReader();
+    fr.onload = e => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type:'array', cellDates:true });
+        const kind = detectKind(wb);
+        PENDING.push({ name:f.name, wb, kind, sheets: defaultSheets(wb, kind) });
+      } catch (err) { toast(`อ่านไฟล์ ${f.name} ไม่ได้: ${err.message}`, 'err'); }
+      if (++done === list.length) render();
+    };
+    fr.onerror = () => { toast(`อ่านไฟล์ ${f.name} ไม่สำเร็จ`, 'err'); if (++done === list.length) render(); };
+    fr.readAsArrayBuffer(f);
+  }
+}
+
+function progress(text, pct){
+  const el = $('#prog'); if (!el) return;
+  el.innerHTML = `<div style="margin-top:10px;font-size:12.5px;color:var(--muted)">${esc(text)}</div>
+    <div class="bar"><i style="width:${pct}%"></i></div>`;
+}
+
+async function run(){
+  if (BUSY) return;
+  BUSY = true;
+  const btn = $('#goBtn'); if (btn) btn.disabled = true;
+  const lines = [];
+  const total = PENDING.length;
+  let fi = 0;
+  for (const p of PENDING){
+    fi++;
+    const on = p.sheets.filter(s => s.on).map(s => s.name);
+    if (!on.length){ lines.push(`${p.name}: ไม่ได้เลือกชีท จึงข้ามไฟล์นี้`); continue; }
+    try {
+      let rows = [], warns = [];
+      if (p.kind === 'sales'){
+        const r = parseSales(p.wb, on); rows = r.rows; warns = r.warn;
+      } else if (p.kind === 'expense'){
+        for (const sn of on){ const r = parseExpenseSheet(p.wb, sn); rows = rows.concat(r.rows); warns = warns.concat(r.warn); }
+      } else {
+        const r = parseOffsys(p.wb, on); rows = r.rows; warns = r.warn;
+      }
+      // กันซ้ำภายในไฟล์เดียวกัน (เช่นติ๊กทั้ง ACC และ Ads เดือนเดียวกัน)
+      const uniq = new Map(); rows.forEach(r => uniq.set(r.id, r));
+      rows = [...uniq.values()];
+
+      progress(`ไฟล์ ${fi}/${total} — ${p.name} · กำลังส่ง ${num(rows.length)} แถว`, 0);
+      await SB.upsert(TABLE[p.kind], rows, (sent, all) =>
+        progress(`ไฟล์ ${fi}/${total} — ${p.name} · ส่งแล้ว ${num(sent)} / ${num(all)} แถว`, sent / all * 100));
+
+      const skip = (warns.join(' ').match(/ข้าม (\d+) แถว/) || [0, 0])[1];
+      await logImport(p.kind, p.name, on.join(', '), rows.length, +skip || 0, warns.join(' | '));
+      lines.push(`<b>${esc(p.name)}</b> → ${KIND_TH[p.kind]} ${num(rows.length)} แถว` +
+                 (warns.length ? `<br><span style="color:var(--red)">${esc(warns.join(' | '))}</span>` : ''));
+    } catch (e) {
+      lines.push(`<b>${esc(p.name)}</b> → <span style="color:var(--red)">ผิดพลาด: ${esc(e.message)}</span>`);
+    }
+  }
+  PENDING = []; BUSY = false;
+  cacheClear();   // หน้าอื่นต้องเห็นข้อมูลชุดใหม่ทันที
+  REPORT = `<div class="okbox" style="margin-top:14px"><b>ผลการนำเข้า</b><br>${lines.join('<br>')}</div>`;
+  try { await loadDims(true); } catch (e) {}
+  render();
+  toast('นำเข้าข้อมูลเรียบร้อย', 'ok');
+}
+
+async function logImport(kind, file, sheets, rows, skip, note){
+  try {
+    await fetch(`${SB_URL}/rest/v1/shopee_imports`, {
+      method:'POST', headers: SB.headers({ Prefer:'return=minimal' }),
+      body: JSON.stringify([{ kind, file_name:file, sheets, rows_in:rows, rows_skip:skip,
+                              note: note || null, by_email: SB.email() }])
+    });
+  } catch (e) {}
+}
+
+async function clearTable(kind, label){
+  if (!confirm(`ลบข้อมูล "${label}" ทั้งหมดออกจากฐานข้อมูลทีม?\nทุกคนในทีมจะไม่เห็นข้อมูลนี้อีก และย้อนกลับไม่ได้`)) return;
+  try {
+    await SB.del(TABLE[kind]);
+    cacheClear();
+    await loadDims(true);
+    render();
+    toast(`ลบข้อมูล ${label} แล้ว`, 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/* drag & drop */
+document.addEventListener('dragover', e => { e.preventDefault(); const d = $('#drop'); if (d) d.classList.add('over'); });
+document.addEventListener('dragleave', () => { const d = $('#drop'); if (d) d.classList.remove('over'); });
+document.addEventListener('drop', e => {
+  e.preventDefault(); const d = $('#drop'); if (d) d.classList.remove('over');
+  if (e.dataTransfer.files.length) stage(e.dataTransfer.files);
+});
+
+(async function(){
+  if (!requireAuth()) return;
+  shell('import', 'นำเข้าข้อมูล', 'อัปโหลดไฟล์ Excel เข้าฐานข้อมูลทีม');
+  try { await loadDims(); } catch (e) { document.getElementById('view').innerHTML = errBox(e); return; }
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>รายรับนอกระบบ · MASARU Shopee</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="assets/common.js"></script>
+</head>
+<body>
+<script>
+let YEAR_ROWS = [];
+function yearOf(){ return FILTER.year === 'all' ? (RANGE.offsys ? yOf(RANGE.offsys.dmax) : new Date().getFullYear()) : +FILTER.year; }
+function onFilterChange(){ renderFilters({ store:false }); load(); }
+
+async function load(){
+  $('#view').innerHTML = loading();
+  const y = yearOf();
+  const owner = FILTER.owner === 'all' ? null : FILTER.owner;
+  try {
+    YEAR_ROWS = await SB.selectCached('shopee_offsys',
+      `select=*&rec_date=gte.${y}-01-01&rec_date=lte.${y}-12-31${owner ? `&owner=eq.${encodeURIComponent(owner)}` : ''}&order=rec_date.desc`);
+    render();
+  } catch (e) { $('#view').innerHTML = errBox(e); }
+}
+
+function render(){
+  destroyCharts(); resetTables();
+  const R = filterRange();
+  const off = YEAR_ROWS.filter(r => String(r.rec_date) >= R.from && String(r.rec_date) <= R.to);
+  const tot = off.reduce((a, r) => a + +r.total, 0);
+  const noAmt = off.filter(r => !+r.total).length;
+
+  const byM = Array(13).fill(0), cntM = Array(13).fill(0);
+  YEAR_ROWS.forEach(r => { byM[mOf(r.rec_date)] += +r.total; cntM[mOf(r.rec_date)]++; });
+  const usedM = [...Array(13).keys()].slice(1).filter(i => cntM[i]);
+
+  const byOwner = [...groupBy(off, r => r.owner || 'ไม่ระบุ')]
+    .map(([k, v]) => ({ k, v: v.reduce((a, r) => a + +r.total, 0), n: v.length })).sort((a, b) => b.v - a.v);
+  const byCh = [...groupBy(off, r => r.channel || 'ไม่ระบุ')]
+    .map(([k, v]) => ({ k, v: v.reduce((a, r) => a + +r.total, 0), n: v.length })).sort((a, b) => b.v - a.v);
+
+  $('#view').innerHTML = `
+    <div class="kpis">
+      ${kpi('ยอดรับนอกระบบรวม', money(tot), `${num(off.length)} รายการ`, 'r')}
+      ${kpi('เฉลี่ยต่อรายการ', money(off.length ? tot / off.length : 0), '', 'n')}
+      ${kpi('รายการสูงสุด', off.length ? money(Math.max(...off.map(r => +r.total))) : '—', '', 'g')}
+      ${kpi('รายการที่ยังไม่กรอกยอด', num(noAmt), noAmt ? 'ต้องตามเก็บข้อมูลเพิ่ม' : 'ครบถ้วน', noAmt ? 'r' : 'ok')}
+    </div>
+    <div class="grid2">
+      <div class="panel"><div class="panel-h"><h3>รายรับนอกระบบรายเดือน</h3>
+        <span class="hint">ปี ${beYear(yearOf())}</span></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cO"></canvas></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>แยกตามช่องทาง</h3></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cCh"></canvas></div></div></div>
+    </div>
+    <div class="panel"><div class="panel-h"><h3>แยกตามผู้ดูแล</h3></div>
+      <div class="panel-b"><div class="chartbox sm"><canvas id="cOwn"></canvas></div></div></div>
+    ${renderTable([
+      { t:'ผู้ดูแล', k:'k', w:14 },
+      { t:'ยอดรวม', num:true, bar:true, sum:true, raw:r=>r.v, fmt:r=>money(r.v), w:15 },
+      { t:'จำนวนรายการ', num:true, sum:true, raw:r=>r.n, fmt:r=>num(r.n), sumFmt:num, w:13 },
+      { t:'เฉลี่ย/รายการ', num:true, raw:r=>r.n?r.v/r.n:0, fmt:r=>money(r.n?r.v/r.n:0), w:14 }
+    ], byOwner, { title:'สรุปตามผู้ดูแล', total:true, sort:1, download:'รายรับนอกระบบ_ตามผู้ดูแล' })}
+    ${renderTable([
+      { t:'วันที่', raw:r=>r.rec_date, fmt:r=>thDate(r.rec_date), w:12 },
+      { t:'ช่องทาง', raw:r=>r.channel, fmt:r=>`<span class="chip ${r.channel==='Shopee'?'sp':'b'}">${esc(r.channel)}</span>`, w:11 },
+      { t:'ร้านค้า', k:'store', w:26 },
+      { t:'ผู้ดูแล', k:'owner', w:11 },
+      { t:'ประเภท', k:'income_type', w:12 },
+      { t:'เลขออเดอร์', k:'order_no', w:14 },
+      { t:'เลขแทร็คกิ้ง', k:'tracking', w:18 },
+      { t:'ยอดรวม', num:true, sum:true, raw:r=>+r.total,
+        fmt:r=>+r.total ? money(r.total) : '<span class="chip r">ยังไม่กรอก</span>', w:13 },
+      { t:'การชำระ', k:'pay_method', w:11 },
+      { t:'บัญชีรับเงิน', k:'payee', w:22 }
+    ], off, { title:'รายการรายรับนอกระบบทั้งหมด', total:true, sort:0, dir:'desc', search:true, download:'รายรับนอกระบบ' })}`;
+
+  paintAllTables();
+  chart('cO', barCfg(usedM.map(i => TH_MON_S[i]),
+    [{ label:'รายรับนอกระบบ', data:usedM.map(i => byM[i]), backgroundColor:C.red, borderRadius:5, maxBarThickness:48 }]));
+  chart('cCh', doughnutCfg(byCh.map(r => r.k), byCh.map(r => r.v)));
+  chart('cOwn', barCfg(byOwner.map(r => r.k), [{ label:'ยอดรวม', data:byOwner.map(r => r.v),
+    backgroundColor: byOwner.map((_, i) => C.pal[i % C.pal.length]), borderRadius:4, maxBarThickness:44 }]));
+}
+
+(async function(){
+  if (!requireAuth()) return;
+  shell('offsys', 'รายรับนอกระบบ', '');
+  try { await loadDims(); } catch (e) { $('#view').innerHTML = errBox(e); return; }
+  renderFilters({ store:false });
+  if (!RANGE.offsys || !RANGE.offsys.rows){
+    $('#view').innerHTML = emptyState('ยังไม่มีข้อมูลรายรับนอกระบบ',
+      'อัปโหลดไฟล์ สรุปรายรับนอกระบบ ก่อนใช้งาน', 'ไปหน้านำเข้าข้อมูล');
+    return;
+  }
+  load();
+})();
+</script>
+</body>
+</html>
