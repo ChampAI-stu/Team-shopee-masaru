@@ -181,7 +181,8 @@ const MODULES = [
   { id: 'sales',   file: 'sales.html',   ic: '▤', t: 'ระบบยอดขาย',      d: 'รายเดือน รายวัน รายบุคคล รายร้าน สินค้าขายดี' },
   { id: 'offsys',  file: 'offsys.html',  ic: '◈', t: 'รายรับนอกระบบ',   d: 'เงินโอนเข้าบัญชีที่ไม่ผ่านแพลตฟอร์ม' },
   { id: 'expense', file: 'expense.html', ic: '▣', t: 'ระบบค่าใช้จ่าย',  d: 'ค่าโฆษณาและค่าใช้จ่ายอื่นของทีม' },
-  { id: 'import',  file: 'import.html',  ic: '↥', t: 'นำเข้าข้อมูล',    d: 'อัปโหลดไฟล์ Excel เพื่ออัปเดตข้อมูล' }
+  { id: 'import',  file: 'import.html',  ic: '↥', t: 'นำเข้าข้อมูล',    d: 'อัปโหลดไฟล์ Excel เพื่ออัปเดตข้อมูล' },
+  { id: 'help',    file: 'help.html',    ic: '?', t: 'วิธีใช้งาน',       d: 'ขั้นตอนใช้งาน ไฟล์ที่ต้องอัป และวิธีอ่านตัวเลข' }
 ];
 
 function shell(active, title, crumb){
