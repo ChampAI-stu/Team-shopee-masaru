@@ -131,7 +131,8 @@ function renderHome(){
     sales:   [`${num(orders)} ออเดอร์`, money(net)],
     offsys:  [`${num(off.length)} รายการ`, money(offTot)],
     expense: [`${num(expIn.length)} รายการ`, money(expTot)],
-    import:  ['อัปเดตล่าสุด', RANGE.sales && RANGE.sales.dmax ? thDate(RANGE.sales.dmax) : '—']
+    import:  ['อัปเดตล่าสุด', RANGE.sales && RANGE.sales.dmax ? thDate(RANGE.sales.dmax) : '—'],
+    help:    ['เปิดครั้งแรก อ่านตรงนี้', 'คู่มือ 4 หัวข้อ']
   };
   const cards = MODULES.filter(m => m.id !== 'index').map(m => `
     <a class="mod" href="${m.file}">
@@ -207,7 +208,8 @@ function onFilterChange(){ renderFilters(); loadHome(); }
   renderFilters();
   if (!RANGE.sales || !RANGE.sales.rows){
     $('#view').innerHTML = emptyState('ยังไม่มีข้อมูลในระบบ',
-      'อัปโหลดไฟล์ Excel ยอดขาย ค่าใช้จ่าย และรายรับนอกระบบ เพื่อเริ่มใช้งาน', 'ไปหน้านำเข้าข้อมูล');
+      'อัปโหลดไฟล์ Excel ยอดขาย ค่าใช้จ่าย และรายรับนอกระบบ เพื่อเริ่มใช้งาน — ถ้ายังไม่แน่ใจว่าต้องอัปไฟล์ไหน อ่านหน้าวิธีใช้งานก่อนได้',
+      'ไปหน้านำเข้าข้อมูล');
     return;
   }
   loadHome();
