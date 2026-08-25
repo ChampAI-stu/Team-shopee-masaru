@@ -358,6 +358,7 @@ function viewSku(){
 /* ---------- boot ---------- */
 (async function(){
   if (!requireAuth()) return;
+  if (!SB.role()){ try { await SB.loadRole(); } catch (e) {} }
   shell('sales', 'ระบบยอดขาย', '');
   try { await loadDims(); } catch (e) { $('#view').innerHTML = errBox(e); return; }
   renderFilters();
