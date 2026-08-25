@@ -76,6 +76,24 @@ const S_START = `
     <tr><td><b>นำเข้าข้อมูล</b></td><td>ทุกครั้งที่มีไฟล์ใหม่</td><td>อัปโหลด Excel และประวัติการนำเข้า</td></tr>
     </tbody></table></div></div>
 
+<div class="panel"><div class="panel-h"><h3>ระดับสิทธิ์</h3>
+  <span class="hint">ระบบมี 2 ระดับ กำหนดตอนสมัครด้วยรหัสเชิญ</span></div>
+  <div class="tw"><table><thead><tr>
+    <th class="na">ระดับ</th><th class="na">ดูข้อมูล / ส่งออก Excel</th>
+    <th class="na">นำเข้า / ล้างข้อมูล</th><th class="na">จัดการสิทธิ์คนอื่น</th></tr></thead>
+    <tbody>
+    <tr><td><span class="chip g">หัวหน้า Shopee</span></td><td>ได้</td><td>ได้</td><td>ได้</td></tr>
+    <tr><td><span class="chip b">Shopee</span></td><td>ได้</td><td>ไม่ได้</td><td>ไม่ได้</td></tr>
+    </tbody></table></div>
+  <div class="panel-b doc" style="padding-top:14px">
+    <ul>
+      <li>ระดับสิทธิ์ของคุณแสดงอยู่มุมซ้ายล่าง ใต้อีเมล</li>
+      <li>ถ้าเป็นระดับ Shopee เมนู "นำเข้าข้อมูล" จะไม่ขึ้น</li>
+      <li>ต้องการเปลี่ยนระดับ แจ้งหัวหน้าทีม — หัวหน้าปรับให้ได้ที่หน้านำเข้าข้อมูล หัวข้อ "สิทธิ์ผู้ใช้งาน"</li>
+      <li>สิทธิ์บังคับที่ฐานข้อมูลด้วย ไม่ใช่แค่ซ่อนเมนู ต่อให้เปิดหน้าตรงก็แก้ข้อมูลไม่ได้</li>
+    </ul>
+  </div></div>
+
 <div class="panel"><div class="panel-h"><h3>เทคนิคที่ใช้ได้ทุกหน้า</h3></div>
   <div class="panel-b doc">
     <ul>
@@ -213,6 +231,14 @@ const S_FAQ = `
       <div class="a">กดปุ่ม <b>⬇ Excel</b> บนตารางที่ต้องการ ระบบจะส่งออกเฉพาะแถวที่กรองและค้นหาไว้
         ตารางรายวันต่อบุคคลก็ส่งออกได้ ได้เป็นตารางไขว้พร้อมยอดรวม</div></details>
 
+    <details class="faq"><summary>ทำไมผมไม่เห็นเมนู "นำเข้าข้อมูล"</summary>
+      <div class="a">บัญชีของคุณเป็นระดับ Shopee ซึ่งดูข้อมูลและส่งออก Excel ได้ แต่แก้ข้อมูลไม่ได้
+        ถ้าต้องอัปโหลดไฟล์ ให้แจ้งหัวหน้าทีมปรับสิทธิ์ให้</div></details>
+
+    <details class="faq"><summary>เข้าสู่ระบบแล้วขึ้นว่า "ยังไม่ได้ตั้งระดับสิทธิ์"</summary>
+      <div class="a">บัญชีสมัครไว้แล้วแต่ยังไม่ได้ผูกระดับสิทธิ์ ให้เลือกระดับแล้วใส่รหัสเชิญที่ขอจากหัวหน้าทีม
+        ใส่ครั้งเดียวจบ ครั้งต่อไปเข้าได้เลย</div></details>
+
     <details class="faq"><summary>ลืมรหัสผ่าน</summary>
       <div class="a">แจ้งผู้ดูแลระบบให้รีเซ็ตให้จากหน้า Authentication ของ Supabase</div></details>
 
@@ -233,8 +259,9 @@ function render(){
   $('#view').innerHTML = tabBar(TABS, TAB, 'setTab') + body;
 }
 
-(function(){
+(async function(){
   if (!requireAuth()) return;
+  if (!SB.role()){ try { await SB.loadRole(); } catch (e) {} }
   shell('help', 'วิธีใช้งาน', 'คู่มือระบบข้อมูลทีม Shopee');
   const b = $('#refreshBtn'); if (b) b.remove();   // หน้านี้ไม่ได้ดึงข้อมูล
   render();
