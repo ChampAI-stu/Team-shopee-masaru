@@ -78,10 +78,10 @@ function viewMonth(){
   const tot = rows.reduce((a, r) => a + r.net, 0);
   const html = `
     <div class="panel"><div class="panel-h"><h3>ยอดขายรายเดือน ปี ${beYear(yearOf())}</h3>
-      <span class="hint">รวม ${money(tot)} · แท่ง = ยอดขาย, เส้น = เฉลี่ยต่อออเดอร์</span></div>
+      <span class="hint">รวม ${money(tot)} · แท่งน้ำเงิน = ยอดขาย (แกนซ้าย) · เส้นทอง = เฉลี่ยต่อออเดอร์ (แกนขวา คนละหน่วย)</span></div>
       <div class="panel-b"><div class="chartbox lg"><canvas id="cM"></canvas></div></div></div>
     ${renderTable([
-      { t:'เดือน', k:'label', w:18 },
+      { t:'เดือน', k:'label', raw:r=>r.k, w:18 },   // เรียงด้วย YYYY-MM ไม่ใช่ชื่อเดือนภาษาไทย
       { t:'ยอดขายสุทธิ', num:true, bar:true, sum:true, raw:r=>r.net, fmt:r=>money(r.net), w:16 },
       { t:'ออเดอร์', num:true, sum:true, raw:r=>r.ord, fmt:r=>num(r.ord), sumFmt:num, w:12 },
       { t:'ชิ้น', num:true, sum:true, raw:r=>r.q, fmt:r=>num(r.q), sumFmt:num, w:12 },
@@ -95,7 +95,13 @@ function viewMonth(){
       { type:'line', label:'เฉลี่ย/ออเดอร์', data:rows.map(r=>r.aov), borderColor:C.gold,
         backgroundColor:C.gold, yAxisID:'y1', tension:.3, order:1, pointRadius:3 }]));
     if (CHARTS.cM){
-      CHARTS.cM.options.scales.y1 = { position:'right', beginAtZero:true, grid:{ display:false }, ticks:{ callback: axisTick } };
+      // สองชุดข้อมูลคนละหน่วย จึงต้องมีชื่อแกนกำกับ ไม่งั้นอ่านจุดสีทองผิดแกน
+      CHARTS.cM.options.scales.y.title  = { display:true, text:'ยอดขายสุทธิ (บาท)', color:'#1F3864', font:{ size:11.5, weight:'600' } };
+      CHARTS.cM.options.scales.y1 = {
+        position:'right', beginAtZero:true, grid:{ display:false },
+        title:{ display:true, text:'เฉลี่ย/ออเดอร์ (บาท)', color:'#C9A84C', font:{ size:11.5, weight:'600' } },
+        ticks:{ color:'#B07C2E', callback: v => nf0.format(v) }
+      };
       CHARTS.cM.update();
     }
   }};
