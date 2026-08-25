@@ -372,7 +372,13 @@ function chart(id, cfg){
   CHARTS[id] = new Chart(el.getContext('2d'), cfg);
 }
 function destroyCharts(){ for (const k in CHARTS){ CHARTS[k].destroy(); delete CHARTS[k]; } }
-const axisTick = v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+'K' : v;
+/* ย่อหน่วยเฉพาะตอนตัวเลขใหญ่พอ ไม่งั้น 1,000 กับ 1,200 จะกลายเป็น "1K" เหมือนกันจนอ่านไม่ออก */
+const axisTick = v => {
+  const n = Math.abs(v);
+  if (n >= 1e6) return (v/1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
+  if (n >= 1e4) return (v/1000).toFixed(0) + 'K';
+  return nf0.format(v);
+};
 
 function barCfg(labels, datasets, o = {}){
   return { type:'bar', data:{ labels, datasets },
