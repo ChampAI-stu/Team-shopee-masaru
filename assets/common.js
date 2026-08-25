@@ -7,9 +7,9 @@ const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsIn
 /* รหัสเชิญ 2 ระดับ — ตัวจริงตรวจที่ฐานข้อมูล (ฟังก์ชัน claim_profile)
    ที่ใส่ไว้ตรงนี้แค่ช่วยบอกผู้ใช้ก่อนส่งเท่านั้น */
 const ROLES = {
-  head:  { code: 'MASARU-SHOPEE-HEAD', label: 'หัวหน้า Shopee',
+  head:  { code: 'MSR-LEAD-9Q4X7T', label: 'หัวหน้า Shopee',
            d: 'ดูข้อมูลได้ทุกอย่าง + นำเข้า/ล้างข้อมูล + จัดการสิทธิ์' },
-  staff: { code: 'MASARU-SHOPEE',      label: 'Shopee',
+  staff: { code: 'MSR-CREW-2B8K5N', label: 'Shopee',
            d: 'ดูข้อมูลและส่งออก Excel ได้ แต่แก้ข้อมูลไม่ได้' }
 };
 
