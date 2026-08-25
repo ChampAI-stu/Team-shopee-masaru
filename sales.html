@@ -114,6 +114,10 @@ function viewMonth(){
   }};
 }
 
+/* สีประจำวันตามคติไทย — ปรับความเข้มให้อ่านออกบนพื้นขาว
+   อา=แดง จ=เหลือง อ=ชมพู พ=เขียว พฤ=ส้ม ศ=ฟ้า ส=ม่วง */
+const DOW_COLOR = ['#C62828', '#D9A400', '#D81B8C', '#1E7145', '#E8730C', '#2E9BD6', '#6A3FA0'];
+
 /* ---------- รายวันทั้งทีม ---------- */
 function viewDay(){
   const g = groupBy(CACHE.daily, r => r.d);
@@ -140,7 +144,8 @@ function viewDay(){
     <div class="grid3">
       <div class="panel"><div class="panel-h"><h3>ยอดขายรายวัน</h3><span class="hint">เส้นประ = ค่าเฉลี่ย</span></div>
         <div class="panel-b"><div class="chartbox"><canvas id="cD"></canvas></div></div></div>
-      <div class="panel"><div class="panel-h"><h3>เฉลี่ยตามวันในสัปดาห์</h3></div>
+      <div class="panel"><div class="panel-h"><h3>เฉลี่ยตามวันในสัปดาห์</h3>
+        <span class="hint">สีประจำวัน</span></div>
         <div class="panel-b"><div class="chartbox"><canvas id="cDow"></canvas></div></div></div>
     </div>
     ${renderTable([
@@ -157,7 +162,8 @@ function viewDay(){
       { label:'ยอดขายสุทธิ', data:rows.map(r=>r.net), borderColor:C.blue, backgroundColor:'rgba(46,117,182,.12)', fill:true },
       { label:'ค่าเฉลี่ยช่วงนี้', data:rows.map(()=>avg), borderColor:C.gold, borderDash:[6,4], pointRadius:0 }]));
     chart('cDow', barCfg(TH_DOW.map(d => 'วัน' + d),
-      [{ label:'เฉลี่ยต่อวัน', data:dowCnt.map((c,i)=>c?dowSum[i]/c:0), backgroundColor:C.pal, borderRadius:4 }]));
+      [{ label:'เฉลี่ยต่อวัน', data:dowCnt.map((c,i)=>c?dowSum[i]/c:0),
+         backgroundColor:DOW_COLOR, borderRadius:4 }]));
   }};
 }
 
