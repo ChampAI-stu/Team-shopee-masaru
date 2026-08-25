@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ระบบยอดขาย · MASARU Shopee</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="assets/common.js"></script>
+</head>
+<body>
+<script>
+const TABS = [['month','รายเดือน'], ['day','รายวันทั้งทีม'], ['person','รายบุคคล'],
+              ['pday','รายวันต่อบุคคล'], ['store','ยอดขายแต่ละร้าน'], ['sku','สินค้าที่ขายดี']];
+let TAB = lsGet('salesTab') || 'month';
+let PDAY_METRIC = 'net', SKU_MODE = 'split';
+const CACHE = {};
+
+function setTab(t){ TAB = t; lsSet('salesTab', t); load(); }
+function setPdayMetric(m){ PDAY_METRIC = m; render(); }
+function setSkuMode(m){ SKU_MODE = m; render(); }
+function onFilterChange(){ renderFilters(); for (const k in CACHE) delete CACHE[k]; load(); }
+
+function args(withStore){
+  const R = filterRange();
+  const a = { p_from: R.from, p_to: R.to, p_owner: FILTER.owner === 'all' ? null : FILTER.owner };
+  if (withStore !== false) a.p_store = FILTER.store === 'all' ? null : FILTER.store;
+  return a;
+}
+function yearOf(){ return FILTER.year === 'all' ? (RANGE.sales ? yOf(RANGE.sales.dmax) : new Date().getFullYear()) : +FILTER.year; }
+
+async function load(){
+  $('#view').innerHTML = tabBar(TABS, TAB, 'setTab') + loading();
+  try {
+    if (TAB === 'month'){
+      const R = { p_from: `${yearOf()}-01-01`, p_to: `${yearOf()}-12-31`,
+                  p_owner: FILTER.owner === 'all' ? null : FILTER.owner,
+                  p_store: FILTER.store === 'all' ? null : FILTER.store };
+      CACHE.monthly = CACHE.monthly || await SB.rpcCached('f_sales_monthly', R);
+    } else if (TAB === 'store'){
+      CACHE.store = CACHE.store || await SB.rpcCached('f_sales_store', args(false));
+    } else if (TAB === 'sku'){
+      CACHE.sku = CACHE.sku || await SB.rpcCached('f_sales_sku', args());
+    } else {
+      CACHE.daily = CACHE.daily || await SB.rpcCached('f_sales_daily', args());
+    }
+    render();
+  } catch (e) { $('#view').innerHTML = tabBar(TABS, TAB, 'setTab') + errBox(e); }
+}
+
+function render(){
+  destroyCharts(); resetTables();
+  const fn = { month: viewMonth, day: viewDay, person: viewPerson,
+               pday: viewPersonDay, store: viewStore, sku: viewSku }[TAB];
+  const out = fn();
+  $('#view').innerHTML = tabBar(TABS, TAB, 'setTab') + out.html;
+  paintAllTables();
+  if (out.charts) out.charts();
+}
+
+/* ---------- รายเดือน ---------- */
+function viewMonth(){
+  const g = groupBy(CACHE.monthly, r => r.ym);
+  const keys = [...g.keys()].sort();
+  const rows = keys.map((k, i) => {
+    const v = g.get(k);
+    const net = v.reduce((a, r) => a + +r.net, 0);
+    const ord = v.reduce((a, r) => a + +r.orders, 0);
+    const prev = i > 0 ? g.get(keys[i-1]).reduce((a, r) => a + +r.net, 0) : 0;
+    return { k, label: `${TH_MONTH[+k.slice(5,7)]} ${beYear(+k.slice(0,4))}`, net, ord,
+             q: v.reduce((a, r) => a + +r.qty, 0), aov: ord ? net/ord : 0,
+             mom: prev ? (net - prev) / prev * 100 : null };
+  });
+  const tot = rows.reduce((a, r) => a + r.net, 0);
+  const html = `
+    <div class="panel"><div class="panel-h"><h3>ยอดขายรายเดือน ปี ${beYear(yearOf())}</h3>
+      <span class="hint">รวม ${money(tot)} · แท่ง = ยอดขาย, เส้น = เฉลี่ยต่อออเดอร์</span></div>
+      <div class="panel-b"><div class="chartbox lg"><canvas id="cM"></canvas></div></div></div>
+    ${renderTable([
+      { t:'เดือน', k:'label', w:18 },
+      { t:'ยอดขายสุทธิ', num:true, bar:true, sum:true, raw:r=>r.net, fmt:r=>money(r.net), w:16 },
+      { t:'ออเดอร์', num:true, sum:true, raw:r=>r.ord, fmt:r=>num(r.ord), sumFmt:num, w:12 },
+      { t:'ชิ้น', num:true, sum:true, raw:r=>r.q, fmt:r=>num(r.q), sumFmt:num, w:12 },
+      { t:'เฉลี่ย/ออเดอร์', num:true, raw:r=>r.aov, fmt:r=>money(r.aov), w:14 },
+      { t:'โต MoM', num:true, raw:r=>r.mom ?? 0,
+        fmt:r=>r.mom==null?'—':`<span class="${r.mom>=0?'up':'down'}">${r.mom>=0?'▲':'▼'} ${nf2.format(Math.abs(r.mom))}%</span>`, w:12 }
+    ], rows, { title:'ตารางยอดขายรายเดือน', total:true, sort:0, dir:'asc', download:'ยอดขายรายเดือน' })}`;
+  return { html, charts(){
+    chart('cM', barCfg(rows.map(r => TH_MON_S[+r.k.slice(5,7)]), [
+      { label:'ยอดขายสุทธิ', data:rows.map(r=>r.net), backgroundColor:C.navy, borderRadius:5, maxBarThickness:52, order:2 },
+      { type:'line', label:'เฉลี่ย/ออเดอร์', data:rows.map(r=>r.aov), borderColor:C.gold,
+        backgroundColor:C.gold, yAxisID:'y1', tension:.3, order:1, pointRadius:3 }]));
+    if (CHARTS.cM){
+      CHARTS.cM.options.scales.y1 = { position:'right', beginAtZero:true, grid:{ display:false }, ticks:{ callback: axisTick } };
+      CHARTS.cM.update();
+    }
+  }};
+}
+
+/* ---------- รายวันทั้งทีม ---------- */
+function viewDay(){
+  const g = groupBy(CACHE.daily, r => r.d);
+  const keys = [...g.keys()].sort();
+  const rows = keys.map(k => {
+    const v = g.get(k);
+    const net = v.reduce((a, r) => a + +r.net, 0), ord = v.reduce((a, r) => a + +r.orders, 0);
+    return { k, label: thDate(k), dow: TH_DOW[new Date(k + 'T00:00:00').getDay()], net, ord,
+             q: v.reduce((a, r) => a + +r.qty, 0), aov: ord ? net/ord : 0, people: v.length };
+  });
+  const tot = rows.reduce((a, r) => a + r.net, 0);
+  const avg = rows.length ? tot / rows.length : 0;
+  const dowSum = Array(7).fill(0), dowCnt = Array(7).fill(0);
+  rows.forEach(r => { const d = new Date(r.k + 'T00:00:00').getDay(); dowSum[d] += r.net; dowCnt[d]++; });
+  const hi = rows.length ? rows.reduce((a, b) => a.net > b.net ? a : b) : null;
+  const lo = rows.length ? rows.reduce((a, b) => a.net < b.net ? a : b) : null;
+  const html = `
+    <div class="kpis">
+      ${kpi('รวมช่วงที่เลือก', money(tot), `${rows.length} วัน`, 'n')}
+      ${kpi('เฉลี่ยต่อวัน', money(avg), '', 'ok')}
+      ${kpi('วันที่ขายดีที่สุด', hi ? money(hi.net) : '—', hi ? hi.label : '', 'g')}
+      ${kpi('วันที่ต่ำสุด', lo ? money(lo.net) : '—', lo ? lo.label : '', 'r')}
+    </div>
+    <div class="grid3">
+      <div class="panel"><div class="panel-h"><h3>ยอดขายรายวัน</h3><span class="hint">เส้นประ = ค่าเฉลี่ย</span></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cD"></canvas></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>เฉลี่ยตามวันในสัปดาห์</h3></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cDow"></canvas></div></div></div>
+    </div>
+    ${renderTable([
+      { t:'วันที่', k:'label', raw:r=>r.k, w:16 },
+      { t:'วัน', raw:r=>r.dow, fmt:r=>`<span class="chip b">${r.dow}</span>`, w:8 },
+      { t:'ยอดขายสุทธิ', num:true, bar:true, sum:true, raw:r=>r.net, fmt:r=>money(r.net), w:16 },
+      { t:'ออเดอร์', num:true, sum:true, raw:r=>r.ord, fmt:r=>num(r.ord), sumFmt:num, w:12 },
+      { t:'ชิ้น', num:true, sum:true, raw:r=>r.q, fmt:r=>num(r.q), sumFmt:num, w:10 },
+      { t:'เฉลี่ย/ออเดอร์', num:true, raw:r=>r.aov, fmt:r=>money(r.aov), w:14 },
+      { t:'คนที่มียอด', num:true, raw:r=>r.people, fmt:r=>num(r.people), w:11 }
+    ], rows, { title:'ตารางยอดขายรายวัน', total:true, sort:0, dir:'asc', search:true, download:'ยอดขายรายวัน' })}`;
+  return { html, charts(){
+    chart('cD', lineCfg(rows.map(r => r.label), [
+      { label:'ยอดขายสุทธิ', data:rows.map(r=>r.net), borderColor:C.blue, backgroundColor:'rgba(46,117,182,.12)', fill:true },
+      { label:'ค่าเฉลี่ยช่วงนี้', data:rows.map(()=>avg), borderColor:C.gold, borderDash:[6,4], pointRadius:0 }]));
+    chart('cDow', barCfg(TH_DOW.map(d => 'วัน' + d),
+      [{ label:'เฉลี่ยต่อวัน', data:dowCnt.map((c,i)=>c?dowSum[i]/c:0), backgroundColor:C.pal, borderRadius:4 }]));
+  }};
+}
+
+/* ---------- รายบุคคล ---------- */
+function viewPerson(){
+  const g = groupBy(CACHE.daily, r => r.owner);
+  const dayKeys = [...new Set(CACHE.daily.map(r => r.d))].sort();
+  const rows = [...g].map(([k, v]) => {
+    const net = v.reduce((a, r) => a + +r.net, 0), ord = v.reduce((a, r) => a + +r.orders, 0);
+    const best = v.reduce((a, b) => +a.net > +b.net ? a : b);
+    return { k, net, ord, q: v.reduce((a, r) => a + +r.qty, 0), aov: ord ? net/ord : 0,
+             activeDays: v.length, perDay: dayKeys.length ? net / dayKeys.length : 0,
+             bestD: best.d, bestV: +best.net };
+  }).sort((a, b) => b.net - a.net);
+  const tot = rows.reduce((a, r) => a + r.net, 0);
+  const html = `
+    <div class="grid2">
+      <div class="panel"><div class="panel-h"><h3>ยอดขายรายบุคคล</h3><span class="hint">รวม ${money(tot)}</span></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cP"></canvas></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>สัดส่วนยอดขายในทีม</h3></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cPs"></canvas></div></div></div>
+    </div>
+    <div class="panel"><div class="panel-h"><h3>แนวโน้มรายวันของแต่ละคน</h3>
+      <span class="hint">คลิกชื่อในคำอธิบายเพื่อซ่อน/แสดง</span></div>
+      <div class="panel-b"><div class="chartbox lg"><canvas id="cPt"></canvas></div></div></div>
+    ${renderTable([
+      { t:'#', fmt:(r,i)=>`<span class="rank">${i+1}</span>`, w:5 },
+      { t:'ผู้ดูแล', k:'k', w:14 },
+      { t:'ยอดขายสุทธิ', num:true, bar:true, sum:true, raw:r=>r.net, fmt:r=>money(r.net), w:16 },
+      { t:'สัดส่วน', num:true, raw:r=>tot?r.net/tot*100:0, fmt:r=>nf2.format(tot?r.net/tot*100:0)+'%', w:10 },
+      { t:'ออเดอร์', num:true, sum:true, raw:r=>r.ord, fmt:r=>num(r.ord), sumFmt:num, w:11 },
+      { t:'ชิ้น', num:true, sum:true, raw:r=>r.q, fmt:r=>num(r.q), sumFmt:num, w:10 },
+      { t:'เฉลี่ย/ออเดอร์', num:true, raw:r=>r.aov, fmt:r=>money(r.aov), w:14 },
+      { t:'เฉลี่ย/วัน', num:true, raw:r=>r.perDay, fmt:r=>money(r.perDay), w:13 },
+      { t:'วันที่ขายดีสุด', raw:r=>r.bestD, fmt:r=>`${thDate(r.bestD)} · ${money(r.bestV)}`, w:22 }
+    ], rows, { title:'ตารางสรุปรายบุคคล', total:true, sort:2, download:'ยอดขายรายบุคคล' })}`;
+  return { html, charts(){
+    chart('cP', barCfg(rows.map(r => r.k), [{ label:'ยอดขายสุทธิ', data:rows.map(r=>r.net),
+      backgroundColor: rows.map((_, i) => C.pal[i % C.pal.length]), borderRadius:5, maxBarThickness:56 }]));
+    chart('cPs', doughnutCfg(rows.map(r => r.k), rows.map(r => r.net)));
+    chart('cPt', lineCfg(dayKeys.map(d => `${dOf(d)} ${TH_MON_S[mOf(d)]}`), rows.map((r, i) => {
+      const m = new Map(g.get(r.k).map(x => [x.d, +x.net]));
+      return { label:r.k, data: dayKeys.map(d => m.get(d) || 0),
+               borderColor:C.pal[i % C.pal.length], backgroundColor:C.pal[i % C.pal.length] };
+    })));
+  }};
+}
+
+/* ---------- รายวันต่อบุคคล ---------- */
+function viewPersonDay(){
+  const owners = [...new Set(CACHE.daily.map(r => r.owner))];
+  const totByOwner = {}; CACHE.daily.forEach(r => totByOwner[r.owner] = (totByOwner[r.owner] || 0) + +r.net);
+  owners.sort((a, b) => totByOwner[b] - totByOwner[a]);
+  const days = [...new Set(CACHE.daily.map(r => r.d))].sort();
+  const cell = new Map();
+  CACHE.daily.forEach(r => cell.set(r.d + '|' + r.owner, r));
+  const val = (d, o) => {
+    const c = cell.get(d + '|' + o); if (!c) return 0;
+    return PDAY_METRIC === 'net' ? +c.net : PDAY_METRIC === 'ord' ? +c.orders : +c.qty;
+  };
+  const fmtV = v => v === 0 ? '<span style="color:#C7D0DC">–</span>' : nf0.format(Math.round(v));
+  const maxV = Math.max(1, ...days.flatMap(d => owners.map(o => val(d, o))));
+  const heat = v => { if (!v) return '';
+    const t = Math.pow(v / maxV, .6);
+    return `background:rgba(31,56,100,${(0.06 + t*0.62).toFixed(3)});color:${t>0.5?'#fff':'var(--ink)'};font-weight:${t>0.35?600:400}`; };
+
+  const head = `<tr><th class="day na">วันที่</th>${owners.map(o=>`<th class="na">${esc(o)}</th>`).join('')}<th class="na">รวมวัน</th></tr>`;
+  const body = days.map(d => {
+    const rowTot = owners.reduce((a, o) => a + val(d, o), 0);
+    return `<tr><td class="day">${dOf(d)} ${TH_MON_S[mOf(d)]} <span class="chip b">${TH_DOW[new Date(d+'T00:00:00').getDay()]}</span></td>`
+      + owners.map(o => `<td style="${heat(val(d,o))}">${fmtV(val(d,o))}</td>`).join('')
+      + `<td style="background:var(--gold-soft);font-weight:700">${fmtV(rowTot)}</td></tr>`;
+  }).join('');
+  const grand = days.reduce((a, d) => a + owners.reduce((x, o) => x + val(d, o), 0), 0);
+  const foot = `<tr><td class="day" style="background:var(--gold-soft)">รวมทั้งช่วง</td>`
+    + owners.map(o => `<td style="background:var(--gold-soft);font-weight:700">${fmtV(days.reduce((a,d)=>a+val(d,o),0))}</td>`).join('')
+    + `<td style="background:var(--gold);color:#fff;font-weight:700">${fmtV(grand)}</td></tr>`;
+
+  const mLabel = PDAY_METRIC === 'net' ? 'ยอดขายสุทธิ (บาท)' : PDAY_METRIC === 'ord' ? 'จำนวนออเดอร์' : 'จำนวนชิ้น';
+  const html = `
+    <div class="panel"><div class="panel-h"><h3>ตารางยอดรายวัน × ผู้ดูแล</h3>
+      <span class="hint">${mLabel} · สีเข้ม = ยอดสูง</span>
+      <div class="tbl-tools"><div class="pill-row">
+        <button class="pill ${PDAY_METRIC==='net'?'on':''}" onclick="setPdayMetric('net')">ยอดขาย</button>
+        <button class="pill ${PDAY_METRIC==='ord'?'on':''}" onclick="setPdayMetric('ord')">ออเดอร์</button>
+        <button class="pill ${PDAY_METRIC==='qty'?'on':''}" onclick="setPdayMetric('qty')">ชิ้น</button>
+      </div><button class="btn" onclick="exportMatrix()">⬇ Excel</button></div></div>
+      <div class="mx"><table><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table></div></div>
+    <div class="panel"><div class="panel-h"><h3>สัดส่วนรายวันแยกตามผู้ดูแล</h3><span class="hint">แท่งซ้อน</span></div>
+      <div class="panel-b"><div class="chartbox lg"><canvas id="cPD"></canvas></div></div></div>`;
+  return { html, charts(){
+    chart('cPD', barCfg(days.map(d => `${dOf(d)} ${TH_MON_S[mOf(d)]}`),
+      owners.map((o, i) => ({ label:o, data: days.map(d => val(d, o)),
+        backgroundColor:C.pal[i % C.pal.length], borderRadius:2, maxBarThickness:34 })),
+      { stacked:true, money: PDAY_METRIC === 'net' }));
+  }};
+}
+function exportMatrix(){
+  const owners = [...new Set(CACHE.daily.map(r => r.owner))].sort();
+  const days = [...new Set(CACHE.daily.map(r => r.d))].sort();
+  const cell = new Map(); CACHE.daily.forEach(r => cell.set(r.d + '|' + r.owner, r));
+  const val = (d, o) => { const c = cell.get(d + '|' + o); if (!c) return 0;
+    return PDAY_METRIC === 'net' ? Math.round(+c.net) : PDAY_METRIC === 'ord' ? +c.orders : +c.qty; };
+  const aoa = [['วันที่', ...owners, 'รวมวัน']];
+  days.forEach(d => aoa.push([d, ...owners.map(o => val(d, o)), owners.reduce((a, o) => a + val(d, o), 0)]));
+  aoa.push(['รวม', ...owners.map(o => days.reduce((a, d) => a + val(d, o), 0)),
+            days.reduce((a, d) => a + owners.reduce((x, o) => x + val(d, o), 0), 0)]);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch:12 }, ...owners.map(() => ({ wch:12 })), { wch:14 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'รายวันต่อบุคคล');
+  XLSX.writeFile(wb, `ยอดขายรายวันต่อบุคคล_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('ดาวน์โหลดตารางแล้ว', 'ok');
+}
+
+/* ---------- ยอดขายแต่ละร้าน ---------- */
+function viewStore(){
+  const rows = CACHE.store.map(r => ({ store:r.store, owner:r.owner, net:+r.net, q:+r.qty,
+    ord:+r.orders, skus:+r.skus, aov: +r.orders ? +r.net / +r.orders : 0 }));
+  const tot = rows.reduce((a, r) => a + r.net, 0);
+  const top = rows.slice(0, 15);
+  const html = `
+    <div class="kpis">
+      ${kpi('จำนวนร้านที่มียอด', num(rows.length), '', 'n')}
+      ${kpi('ยอดขายรวม', money(tot), '', 'ok')}
+      ${kpi('ร้านอันดับ 1', rows.length ? rows[0].store : '—', rows.length ? money(rows[0].net) : '', 'g')}
+      ${kpi('Top 10 คิดเป็น', rows.length ? nf2.format(rows.slice(0,10).reduce((a,r)=>a+r.net,0)/tot*100)+'%' : '—', 'ของยอดรวม', 'r')}
+    </div>
+    <div class="panel"><div class="panel-h"><h3>15 ร้านที่ทำยอดสูงสุด</h3></div>
+      <div class="panel-b"><div class="chartbox xl"><canvas id="cS"></canvas></div></div></div>
+    ${renderTable([
+      { t:'#', fmt:(r,i)=>`<span class="rank">${i+1}</span>`, w:5 },
+      { t:'ชื่อร้าน', k:'store', w:32 },
+      { t:'ผู้ดูแลหลัก', raw:r=>r.owner, fmt:r=>`<span class="chip b">${esc(r.owner)}</span>`, w:12 },
+      { t:'ยอดขายสุทธิ', num:true, bar:true, sum:true, raw:r=>r.net, fmt:r=>money(r.net), w:16 },
+      { t:'สัดส่วน', num:true, raw:r=>tot?r.net/tot*100:0, fmt:r=>nf2.format(tot?r.net/tot*100:0)+'%', w:10 },
+      { t:'ออเดอร์', num:true, sum:true, raw:r=>r.ord, fmt:r=>num(r.ord), sumFmt:num, w:11 },
+      { t:'ชิ้น', num:true, sum:true, raw:r=>r.q, fmt:r=>num(r.q), sumFmt:num, w:10 },
+      { t:'เฉลี่ย/ออเดอร์', num:true, raw:r=>r.aov, fmt:r=>money(r.aov), w:14 },
+      { t:'จำนวน SKU', num:true, raw:r=>r.skus, fmt:r=>num(r.skus), w:11 }
+    ], rows, { title:'ยอดขายแต่ละร้าน', total:true, sort:3, search:true, download:'ยอดขายแต่ละร้าน' })}`;
+  return { html, charts(){
+    chart('cS', hbarCfg(top.map(r => r.store.length > 22 ? r.store.slice(0,21)+'…' : r.store),
+      top.map(r => r.net), C.blue));
+  }};
+}
+
+/* ---------- สินค้าที่ขายดี ---------- */
+function viewSku(){
+  const agg = new Map();
+  const get = k => { let a = agg.get(k); if (!a){ a = { k, qty:0, net:0, stores:0 }; agg.set(k, a); } return a; };
+  for (const r of CACHE.sku){
+    if (SKU_MODE === 'raw'){
+      const a = get(r.sku || '(ไม่ระบุ)');
+      a.qty += +r.qty; a.net += +r.net; a.stores = Math.max(a.stores, +r.stores);
+      continue;
+    }
+    const parts = splitSku(r.sku);
+    if (!parts.length) continue;
+    const units = parts.reduce((x, p) => x + p.n, 0) || 1;   // จำนวนชิ้นทั้งหมดในหนึ่งชุด
+    for (const p of parts){
+      const a = get(p.sku);
+      a.qty += p.n * (+r.qty);                 // ชิ้นของส่วนประกอบ = ชิ้นต่อชุด × จำนวนชุดที่ขาย
+      a.net += (+r.net) * (p.n / units);       // เฉลี่ยยอดเงินตามสัดส่วนชิ้นในชุด
+      a.stores = Math.max(a.stores, +r.stores);
+    }
+  }
+  const rows = [...agg.values()].map(a => ({ k:a.k, qty:a.qty, net:a.net, stores:a.stores,
+    avg: a.qty ? a.net / a.qty : 0 })).sort((a, b) => b.net - a.net);
+  const tot = rows.reduce((a, r) => a + r.net, 0);
+  const totQ = rows.reduce((a, r) => a + r.qty, 0);
+  const top = rows.slice(0, 15);
+  const byQty = [...rows].sort((a, b) => b.qty - a.qty).slice(0, 10);
+  const html = `
+    <div class="panel"><div class="panel-h"><h3>โหมดการนับสินค้า</h3>
+      <div class="tbl-tools"><div class="pill-row">
+        <button class="pill ${SKU_MODE==='split'?'on':''}" onclick="setSkuMode('split')">แยกชิ้นในเซ็ต</button>
+        <button class="pill ${SKU_MODE==='raw'?'on':''}" onclick="setSkuMode('raw')">ตามรหัสที่บันทึก</button>
+      </div></div></div>
+      <div class="panel-b" style="color:var(--muted);font-size:12.5px">${SKU_MODE==='split'
+        ? 'แยกรหัสที่ขายเป็นชุด เช่น <b>SCDW-130*1/PTB10-2040*1</b> ออกเป็นรายชิ้น และเฉลี่ยยอดเงินตามจำนวนชิ้นในชุด — ใช้ดูว่าสินค้าตัวไหนถูกขายจริงบ่อยที่สุด'
+        : 'นับตามรหัสที่บันทึกทั้งสตริง — ใช้ดูว่าชุดขายแบบไหนขายดี'}</div></div>
+    <div class="kpis">
+      ${kpi('จำนวนรายการสินค้า', num(rows.length), SKU_MODE==='split'?'นับแยกชิ้น':'นับตามรหัสเดิม', 'n')}
+      ${kpi('ชิ้นที่ขายได้', num(totQ), '', 'ok')}
+      ${kpi('สินค้าอันดับ 1', rows.length ? rows[0].k : '—', rows.length ? money(rows[0].net) : '', 'g')}
+      ${kpi('Top 10 คิดเป็น', rows.length ? nf2.format(rows.slice(0,10).reduce((a,r)=>a+r.net,0)/tot*100)+'%' : '—', 'ของยอดขาย', 'r')}
+    </div>
+    <div class="grid3">
+      <div class="panel"><div class="panel-h"><h3>15 อันดับตามยอดขาย</h3></div>
+        <div class="panel-b"><div class="chartbox xl"><canvas id="cSku"></canvas></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>10 อันดับตามจำนวนชิ้น</h3></div>
+        <div class="panel-b"><div class="chartbox xl"><canvas id="cSkuQ"></canvas></div></div></div>
+    </div>
+    ${renderTable([
+      { t:'#', fmt:(r,i)=>`<span class="rank">${i+1}</span>`, w:5 },
+      { t:'SKU', k:'k', w:34 },
+      { t:'ยอดขาย', num:true, bar:true, sum:true, raw:r=>r.net, fmt:r=>money(r.net), w:15 },
+      { t:'สัดส่วน', num:true, raw:r=>tot?r.net/tot*100:0, fmt:r=>nf2.format(tot?r.net/tot*100:0)+'%', w:10 },
+      { t:'จำนวนชิ้น', num:true, sum:true, raw:r=>Math.round(r.qty), fmt:r=>num(r.qty), sumFmt:num, w:11 },
+      { t:'ราคาเฉลี่ย/ชิ้น', num:true, raw:r=>r.avg, fmt:r=>money(r.avg), w:14 },
+      { t:'ขายในกี่ร้าน', num:true, raw:r=>r.stores, fmt:r=>num(r.stores), w:12 }
+    ], rows, { title:'สินค้าที่ขายดี', total:true, sort:2, search:true, download:'สินค้าขายดี' })}`;
+  return { html, charts(){
+    chart('cSku', hbarCfg(top.map(r => r.k.length > 26 ? r.k.slice(0,25)+'…' : r.k), top.map(r => r.net), C.navy));
+    chart('cSkuQ', hbarCfg(byQty.map(r => r.k.length > 20 ? r.k.slice(0,19)+'…' : r.k),
+      byQty.map(r => Math.round(r.qty)), C.gold, { money:false }));
+  }};
+}
+
+/* ---------- boot ---------- */
+(async function(){
+  if (!requireAuth()) return;
+  if (!SB.role()){ try { await SB.loadRole(); } catch (e) {} }
+  shell('sales', 'ระบบยอดขาย', '');
+  try { await loadDims(); } catch (e) { $('#view').innerHTML = errBox(e); return; }
+  renderFilters();
+  if (!RANGE.sales || !RANGE.sales.rows){
+    $('#view').innerHTML = emptyState('ยังไม่มีข้อมูลยอดขาย', 'อัปโหลดไฟล์ Data ยอดขาย Shopee ก่อนใช้งาน', 'ไปหน้านำเข้าข้อมูล');
+    return;
+  }
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ระบบค่าใช้จ่าย · MASARU Shopee</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="assets/common.js"></script>
+</head>
+<body>
+<script>
+const TABS = [['month','ค่าใช้จ่ายรายเดือน'], ['person','ค่าใช้จ่ายรายบุคคล'],
+              ['store','แยกตามร้าน'], ['list','รายการทั้งหมด']];
+let TAB = lsGet('expTab') || 'month';
+let EXP_YEAR = [], SALE_MONTH = [];
+
+function setTab(t){ TAB = t; lsSet('expTab', t); render(); }
+function onFilterChange(){ renderFilters({ store:false }); load(); }
+function yearOf(){ return FILTER.year === 'all' ? (RANGE.expense ? yOf(RANGE.expense.dmax) : new Date().getFullYear()) : +FILTER.year; }
+
+async function load(){
+  $('#view').innerHTML = tabBar(TABS, TAB, 'setTab') + loading();
+  const y = yearOf();
+  const owner = FILTER.owner === 'all' ? null : FILTER.owner;
+  try {
+    const [exp, sale] = await Promise.all([
+      SB.selectCached('shopee_expense',
+        `select=*&pay_date=gte.${y}-01-01&pay_date=lte.${y}-12-31${owner ? `&owner=eq.${encodeURIComponent(owner)}` : ''}&order=pay_date.desc`),
+      SB.rpcCached('f_sales_monthly', { p_from: `${y}-01-01`, p_to: `${y}-12-31`, p_owner: owner, p_store: null })
+    ]);
+    EXP_YEAR = exp; SALE_MONTH = sale;
+    render();
+  } catch (e) { $('#view').innerHTML = tabBar(TABS, TAB, 'setTab') + errBox(e); }
+}
+
+/* ค่าใช้จ่ายในช่วงที่กรอง (ปี + เดือน) */
+function expNow(){
+  const R = filterRange();
+  return EXP_YEAR.filter(r => String(r.pay_date) >= R.from && String(r.pay_date) <= R.to);
+}
+function saleMap(){
+  const R = filterRange(), m = new Map();
+  SALE_MONTH.forEach(r => {
+    const first = r.ym + '-01';
+    if (first >= R.from.slice(0,7) + '-01' && first <= R.to)
+      m.set(r.ym, (m.get(r.ym) || 0) + +r.net);
+  });
+  return m;
+}
+
+function render(){
+  destroyCharts(); resetTables();
+  const exp = expNow();
+  const tot = exp.reduce((a, r) => a + +r.amount, 0);
+  const ads = exp.filter(r => /ads/i.test(r.category || '')).reduce((a, r) => a + +r.amount, 0);
+  const ov = overlap(saleMap(), exp);
+  const expMonths = new Set(exp.map(r => String(r.pay_date).slice(0,7))).size;
+  const head = `<div class="kpis">
+      ${kpi('ค่าใช้จ่ายรวม', money(tot), `${num(exp.length)} รายการ`, 'g')}
+      ${kpi('ค่าโฆษณา (Ads)', money(ads), tot ? nf2.format(ads/tot*100) + '% ของค่าใช้จ่าย' : '', 'r')}
+      ${kpi('ค่าใช้จ่ายอื่น', money(tot - ads), '', 'n')}
+      ${kpi('Ads / ยอดขาย', ov.ratio == null ? '—' : nf2.format(ov.ratio) + '%',
+            ov.ratio == null ? 'ไม่มีเดือนที่เทียบได้' : (ov.partial ? 'เทียบได้เฉพาะ ' : '') + ov.label,
+            ov.ratio == null || ov.partial ? 'g' : (ov.ratio > 25 ? 'r' : 'ok'))}
+    </div>${overlapNote(ov, expMonths)}`;
+  const out = { month: viewMonth, person: () => viewPerson(ov), store: viewStore, list: viewList }[TAB](exp);
+  $('#view').innerHTML = tabBar(TABS, TAB, 'setTab') + head + out.html;
+  paintAllTables();
+  if (out.charts) out.charts();
+}
+
+/* ---------- รายเดือน ---------- */
+function viewMonth(){
+  const exp = EXP_YEAR;
+  const cats = [...new Set(exp.map(r => r.category || 'ไม่ระบุ'))];
+  const g = groupBy(exp, r => String(r.pay_date).slice(0, 7));
+  const keys = [...g.keys()].sort();
+  const gs = new Map(); SALE_MONTH.forEach(r => gs.set(r.ym, (gs.get(r.ym) || 0) + +r.net));
+  const rows = keys.map(k => {
+    const v = g.get(k);
+    const amt = v.reduce((a, r) => a + +r.amount, 0);
+    const ads = v.filter(r => /ads/i.test(r.category || '')).reduce((a, r) => a + +r.amount, 0);
+    const sl = gs.get(k) || 0;
+    return { k, label: `${TH_MONTH[+k.slice(5,7)]} ${beYear(+k.slice(0,4))}`, amt, ads,
+             other: amt - ads, n: v.length, sale: sl, ratio: sl ? ads / sl * 100 : null };
+  });
+  const html = `
+    <div class="grid2">
+      <div class="panel"><div class="panel-h"><h3>ค่าใช้จ่ายรายเดือนแยกประเภท</h3>
+        <span class="hint">ปี ${beYear(yearOf())}</span></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cEM"></canvas></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>สัดส่วนค่าโฆษณาต่อยอดขาย</h3>
+        <span class="hint">เดือนที่ไม่มีข้อมูลยอดขายจะเว้นว่าง</span></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cER"></canvas></div></div></div>
+    </div>
+    ${renderTable([
+      { t:'เดือน', k:'label', raw:r=>r.k, w:18 },
+      { t:'ค่าใช้จ่ายรวม', num:true, bar:true, sum:true, raw:r=>r.amt, fmt:r=>money(r.amt), w:16 },
+      { t:'ค่า Ads', num:true, sum:true, raw:r=>r.ads, fmt:r=>money(r.ads), w:15 },
+      { t:'อื่นๆ', num:true, sum:true, raw:r=>r.other, fmt:r=>money(r.other), w:13 },
+      { t:'จำนวนรายการ', num:true, sum:true, raw:r=>r.n, fmt:r=>num(r.n), sumFmt:num, w:12 },
+      { t:'ยอดขายเดือนนั้น', num:true, sum:true, raw:r=>r.sale, fmt:r=>r.sale?money(r.sale):'—', w:16 },
+      { t:'Ads/ยอดขาย', num:true, raw:r=>r.ratio ?? 0,
+        fmt:r=>r.ratio==null?'—':`<span class="chip ${r.ratio>25?'r':'ok'}">${nf2.format(r.ratio)}%</span>`, w:12 }
+    ], rows, { title:`ค่าใช้จ่ายรายเดือน ปี ${beYear(yearOf())}`, total:true, sort:0, dir:'asc', download:'ค่าใช้จ่ายรายเดือน' })}`;
+  return { html, charts(){
+    chart('cEM', barCfg(keys.map(k => TH_MON_S[+k.slice(5,7)]),
+      cats.map((c, i) => ({ label:c,
+        data: keys.map(k => g.get(k).filter(r => (r.category || 'ไม่ระบุ') === c).reduce((a, r) => a + +r.amount, 0)),
+        backgroundColor:C.pal[i % C.pal.length], borderRadius:2, maxBarThickness:52 })), { stacked:true }));
+    chart('cER', lineCfg(rows.map(r => TH_MON_S[+r.k.slice(5,7)]),
+      [{ label:'สัดส่วน Ads ต่อยอดขาย (%)', data:rows.map(r => r.ratio),
+         borderColor:C.red, backgroundColor:'rgba(192,0,0,.10)', fill:true }], { money:false }));
+    if (CHARTS.cER){
+      CHARTS.cER.options.plugins.tooltip.callbacks.label = c => ` ${c.parsed.y == null ? '—' : nf2.format(c.parsed.y) + '%'}`;
+      CHARTS.cER.options.scales.y.ticks.callback = v => v + '%';
+      CHARTS.cER.update();
+    }
+  }};
+}
+
+/* ---------- รายบุคคล ---------- */
+function viewPerson(ov){
+  const exp = expNow();
+  const g = groupBy(exp, r => r.owner || 'ไม่ระบุ');
+  const M = new Set(ov.months);
+  const saleByOwner = new Map();
+  SALE_MONTH.filter(r => M.has(r.ym)).forEach(r => saleByOwner.set(r.owner, (saleByOwner.get(r.owner) || 0) + +r.net));
+  const cats = [...new Set(exp.map(r => r.category || 'ไม่ระบุ'))];
+  const rows = [...g].map(([k, v]) => {
+    const amt = v.reduce((a, r) => a + +r.amount, 0);
+    const ads = v.filter(r => /ads/i.test(r.category || '')).reduce((a, r) => a + +r.amount, 0);
+    const adsCmp = v.filter(r => /ads/i.test(r.category || '') && M.has(String(r.pay_date).slice(0,7)))
+                    .reduce((a, r) => a + +r.amount, 0);
+    const sl = saleByOwner.get(k) || 0;
+    return { k, amt, ads, adsCmp, other: amt - ads, n: v.length, sale: sl,
+             ratio: (sl && adsCmp) ? adsCmp / sl * 100 : null, roas: adsCmp ? sl / adsCmp : null };
+  }).sort((a, b) => b.amt - a.amt);
+  const tag = ov.months.length ? ` (${ov.label})` : '';
+  const html = `
+    <div class="grid2">
+      <div class="panel"><div class="panel-h"><h3>ค่าใช้จ่ายรายบุคคลแยกประเภท</h3></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cEP"></canvas></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>ยอดขาย vs ค่าใช้จ่าย</h3>
+        <span class="hint">${ov.months.length ? 'เฉพาะเดือน ' + ov.label : 'ไม่มีเดือนที่เทียบได้'}</span></div>
+        <div class="panel-b"><div class="chartbox"><canvas id="cEc"></canvas></div></div></div>
+    </div>
+    ${renderTable([
+      { t:'#', fmt:(r,i)=>`<span class="rank">${i+1}</span>`, w:5 },
+      { t:'ผู้ดูแล', k:'k', w:13 },
+      { t:'ค่าใช้จ่ายรวม', num:true, bar:true, sum:true, raw:r=>r.amt, fmt:r=>money(r.amt), w:16 },
+      { t:'ค่า Ads', num:true, sum:true, raw:r=>r.ads, fmt:r=>money(r.ads), w:14 },
+      { t:'อื่นๆ', num:true, sum:true, raw:r=>r.other, fmt:r=>money(r.other), w:12 },
+      { t:'รายการ', num:true, sum:true, raw:r=>r.n, fmt:r=>num(r.n), sumFmt:num, w:10 },
+      { t:'ยอดขาย'+tag, num:true, sum:true, raw:r=>r.sale, fmt:r=>r.sale?money(r.sale):'—', w:16 },
+      { t:'Ads/ยอดขาย'+tag, num:true, raw:r=>r.ratio ?? 0,
+        fmt:r=>r.ratio==null?'—':`<span class="chip ${r.ratio>25?'r':'ok'}">${nf2.format(r.ratio)}%</span>`, w:14 },
+      { t:'ยอดขายต่อ 1฿ Ads', num:true, raw:r=>r.roas ?? 0, fmt:r=>r.roas==null?'—':nf2.format(r.roas)+'x', w:15 }
+    ], rows, { title:'ค่าใช้จ่ายรายบุคคล',
+               hint: ov.months.length ? `คอลัมน์เทียบยอดขายใช้เฉพาะเดือน ${ov.label}` : '',
+               total:true, sort:2, download:'ค่าใช้จ่ายรายบุคคล' })}`;
+  return { html, charts(){
+    chart('cEP', barCfg(rows.map(r => r.k),
+      cats.map((c, i) => ({ label:c,
+        data: rows.map(r => g.get(r.k).filter(x => (x.category || 'ไม่ระบุ') === c).reduce((a, x) => a + +x.amount, 0)),
+        backgroundColor:C.pal[i % C.pal.length], borderRadius:2, maxBarThickness:52 })), { stacked:true }));
+    chart('cEc', barCfg(rows.map(r => r.k), [
+      { label:'ยอดขาย', data:rows.map(r => r.sale), backgroundColor:C.navy, borderRadius:4, maxBarThickness:26 },
+      { label:'ค่า Ads', data:rows.map(r => r.adsCmp), backgroundColor:C.gold, borderRadius:4, maxBarThickness:26 }]));
+  }};
+}
+
+/* ---------- แยกตามร้าน ---------- */
+function viewStore(exp){
+  const g = groupBy(exp, r => r.store || 'ไม่ระบุ');
+  const rows = [...g].map(([k, v]) => {
+    const amt = v.reduce((a, r) => a + +r.amount, 0);
+    const oc = {}; v.forEach(r => oc[r.owner] = (oc[r.owner] || 0) + +r.amount);
+    const main = Object.entries(oc).sort((a, b) => b[1] - a[1])[0];
+    return { k, amt, n: v.length, owner: main ? main[0] : '—', avg: amt / v.length };
+  }).sort((a, b) => b.amt - a.amt);
+  const top = rows.slice(0, 15);
+  const html = `
+    <div class="panel"><div class="panel-h"><h3>15 ร้านที่ใช้งบสูงสุด</h3></div>
+      <div class="panel-b"><div class="chartbox xl"><canvas id="cES"></canvas></div></div></div>
+    ${renderTable([
+      { t:'#', fmt:(r,i)=>`<span class="rank">${i+1}</span>`, w:5 },
+      { t:'ร้าน / รายละเอียด', k:'k', w:32 },
+      { t:'ผู้ดูแล', raw:r=>r.owner, fmt:r=>`<span class="chip b">${esc(r.owner)}</span>`, w:12 },
+      { t:'ค่าใช้จ่ายรวม', num:true, bar:true, sum:true, raw:r=>r.amt, fmt:r=>money(r.amt), w:16 },
+      { t:'จำนวนครั้ง', num:true, sum:true, raw:r=>r.n, fmt:r=>num(r.n), sumFmt:num, w:12 },
+      { t:'เฉลี่ย/ครั้ง', num:true, raw:r=>r.avg, fmt:r=>money(r.avg), w:14 }
+    ], rows, { title:'ค่าใช้จ่ายแยกตามร้าน', total:true, sort:3, search:true, download:'ค่าใช้จ่ายตามร้าน' })}`;
+  return { html, charts(){
+    chart('cES', hbarCfg(top.map(r => r.k.length > 22 ? r.k.slice(0,21)+'…' : r.k), top.map(r => r.amt), C.gold));
+  }};
+}
+
+/* ---------- รายการทั้งหมด ---------- */
+function viewList(exp){
+  return { html: renderTable([
+    { t:'วันที่ชำระ', raw:r=>r.pay_date, fmt:r=>thDate(r.pay_date), w:13 },
+    { t:'ประเภท', raw:r=>r.category, fmt:r=>`<span class="chip ${/ads/i.test(r.category||'')?'r':'g'}">${esc(r.category)}</span>`, w:15 },
+    { t:'ผู้ดูแล', k:'owner', w:11 },
+    { t:'ร้าน / รายละเอียด', k:'store', w:30 },
+    { t:'จำนวนเงิน', num:true, sum:true, raw:r=>+r.amount, fmt:r=>money2(r.amount), w:14 },
+    { t:'หมายเหตุ', k:'note', w:18 },
+    { t:'ที่มา', k:'src', w:22 }
+  ], exp, { title:'รายการค่าใช้จ่ายทั้งหมด', total:true, sort:0, dir:'desc', search:true, download:'รายการค่าใช้จ่าย' }) };
+}
+
+/* ---------- boot ---------- */
+(async function(){
+  if (!requireAuth()) return;
+  if (!SB.role()){ try { await SB.loadRole(); } catch (e) {} }
+  shell('expense', 'ระบบค่าใช้จ่าย', '');
+  try { await loadDims(); } catch (e) { $('#view').innerHTML = errBox(e); return; }
+  renderFilters({ store:false });
+  if (!RANGE.expense || !RANGE.expense.rows){
+    $('#view').innerHTML = emptyState('ยังไม่มีข้อมูลค่าใช้จ่าย', 'อัปโหลดไฟล์ ค่าใช้จ่ายทีม Shopee ก่อนใช้งาน', 'ไปหน้านำเข้าข้อมูล');
+    return;
+  }
+  load();
+})();
+</script>
+</body>
+</html>
