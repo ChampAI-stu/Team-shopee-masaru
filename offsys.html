@@ -91,6 +91,7 @@ function render(){
 
 (async function(){
   if (!requireAuth()) return;
+  if (!SB.role()){ try { await SB.loadRole(); } catch (e) {} }
   shell('offsys', 'รายรับนอกระบบ', '');
   try { await loadDims(); } catch (e) { $('#view').innerHTML = errBox(e); return; }
   renderFilters({ store:false });
