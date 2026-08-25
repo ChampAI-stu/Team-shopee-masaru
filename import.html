@@ -44,8 +44,47 @@ function render(){
       <div class="panel-b"><div class="status-grid" id="stat">${statusCards()}</div></div></div>
 
     <div class="panel"><div class="panel-h"><h3>ประวัติการนำเข้า 20 ครั้งล่าสุด</h3></div>
-      <div class="tw" id="hist"><div style="padding:20px;color:var(--muted)">กำลังโหลด…</div></div></div>`;
+      <div class="tw" id="hist"><div style="padding:20px;color:var(--muted)">กำลังโหลด…</div></div></div>
+
+    <div class="panel"><div class="panel-h"><h3>สิทธิ์ผู้ใช้งาน</h3>
+      <span class="hint">หัวหน้า Shopee นำเข้า/ล้างข้อมูลได้ · Shopee ดูอย่างเดียว</span>
+      <div class="tbl-tools"><button class="btn" onclick="loadUsers()">รีเฟรช</button></div></div>
+      <div class="tw" id="users"><div style="padding:20px;color:var(--muted)">กำลังโหลด…</div></div></div>`;
   loadHistory();
+  loadUsers();
+}
+
+async function loadUsers(){
+  const el = $('#users'); if (!el) return;
+  try {
+    const rows = await SB.rpc('list_users');
+    el.innerHTML = `<table><thead><tr>
+        <th class="na">อีเมล</th><th class="na">ระดับสิทธิ์</th>
+        <th class="na">สมัครเมื่อ</th><th class="na">เปลี่ยนเป็น</th></tr></thead>
+      <tbody>${rows.map(r => {
+        const me = (r.email || '').toLowerCase() === (SB.email() || '').toLowerCase();
+        const head = r.role === 'head';
+        return `<tr>
+          <td>${esc(r.email)}${me ? ' <span class="chip b">คุณ</span>' : ''}</td>
+          <td><span class="chip ${head ? 'g' : r.role === 'staff' ? 'b' : 'r'}">${
+            esc(head ? 'หัวหน้า Shopee' : r.role === 'staff' ? 'Shopee' : r.role)}</span></td>
+          <td>${new Date(r.created_at).toLocaleDateString('th-TH')}</td>
+          <td>${me && head ? '<span style="color:var(--muted)">—</span>'
+            : `<button class="btn sm" onclick="changeRole('${esc(r.email)}','${head ? 'staff' : 'head'}')">${
+                head ? 'ลดเป็น Shopee' : 'ตั้งเป็นหัวหน้า'}</button>`}</td></tr>`;
+      }).join('')}</tbody></table>`;
+  } catch (e) {
+    el.innerHTML = `<div style="padding:16px"><div class="err">${esc(e.message)}</div></div>`;
+  }
+}
+async function changeRole(email, role){
+  const label = role === 'head' ? 'หัวหน้า Shopee' : 'Shopee';
+  if (!confirm(`เปลี่ยนสิทธิ์ของ ${email} เป็น "${label}" ?`)) return;
+  try {
+    await SB.rpc('set_role', { p_email: email, p_role: role });
+    toast('เปลี่ยนสิทธิ์แล้ว', 'ok');
+    loadUsers();
+  } catch (e) { toast(e.message.replace(/^.*message":"|"}.*$/g, ''), 'err'); }
 }
 
 function statusCards(){
@@ -209,6 +248,8 @@ document.addEventListener('drop', e => {
 (async function(){
   if (!requireAuth()) return;
   shell('import', 'นำเข้าข้อมูล', 'อัปโหลดไฟล์ Excel เข้าฐานข้อมูลทีม');
+  if (!SB.role()){ try { await SB.loadRole(); } catch (e) {} }
+  if (!requireHead()) return;
   try { await loadDims(); } catch (e) { document.getElementById('view').innerHTML = errBox(e); return; }
   render();
 })();
