@@ -217,6 +217,7 @@ function viewList(exp){
 /* ---------- boot ---------- */
 (async function(){
   if (!requireAuth()) return;
+  if (!SB.role()){ try { await SB.loadRole(); } catch (e) {} }
   shell('expense', 'ระบบค่าใช้จ่าย', '');
   try { await loadDims(); } catch (e) { $('#view').innerHTML = errBox(e); return; }
   renderFilters({ store:false });
