@@ -27,8 +27,8 @@ function loginScreen(mode){
     ${signup ? `
     <div class="fld"><label>ระดับสิทธิ์</label>
       <select id="rl" onchange="roleHint()" style="border:1px solid var(--line);border-radius:9px;padding:10px 12px">
-        <option value="staff">Shopee — ดูข้อมูลอย่างเดียว</option>
-        <option value="head">หัวหน้า Shopee — นำเข้าและจัดการข้อมูลได้</option>
+        <option value="staff">${ROLES.staff.label}</option>
+        <option value="head">${ROLES.head.label}</option>
       </select>
       <div id="rhint" style="font-size:11.5px;color:var(--muted)"></div></div>
     <div class="fld"><label>รหัสเชิญของระดับที่เลือก</label><input id="iv" placeholder="ขอจากหัวหน้าทีม"></div>` : ''}
@@ -91,15 +91,20 @@ function claimScreen(){
     <div class="mark">MASARU<span>·</span>Shopee</div>
     <div class="sub">บัญชีนี้ยังไม่ได้ตั้งระดับสิทธิ์ — ใส่รหัสเชิญเพื่อเริ่มใช้งาน</div>
     <div class="fld"><label>ระดับสิทธิ์</label>
-      <select id="rl2" style="border:1px solid var(--line);border-radius:9px;padding:10px 12px">
-        <option value="staff">Shopee — ดูข้อมูลอย่างเดียว</option>
-        <option value="head">หัวหน้า Shopee — นำเข้าและจัดการข้อมูลได้</option>
-      </select></div>
+      <select id="rl2" onchange="roleHint2()" style="border:1px solid var(--line);border-radius:9px;padding:10px 12px">
+        <option value="staff">${ROLES.staff.label}</option>
+        <option value="head">${ROLES.head.label}</option>
+      </select>
+      <div id="rhint2" style="font-size:11.5px;color:var(--muted)"></div></div>
     <div class="fld"><label>รหัสเชิญ</label><input id="iv2" placeholder="ขอจากหัวหน้าทีม"></div>
     <div id="msg2" style="margin-bottom:12px"></div>
     <button class="btn p" id="go2">ยืนยัน</button>
     <div class="alt"><a onclick="SB.signOut()">ออกจากระบบ</a></div>
   </div></div>`;
+  window.roleHint2 = () => {
+    document.getElementById('rhint2').textContent = ROLES[document.getElementById('rl2').value].d;
+  };
+  roleHint2();
   document.getElementById('go2').onclick = async () => {
     const b = document.getElementById('go2');
     b.disabled = true; b.textContent = 'กำลังตรวจสอบ…';
