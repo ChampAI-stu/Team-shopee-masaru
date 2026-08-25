@@ -4,7 +4,14 @@
 
 const SB_URL = 'https://xydvcqtsrckgdsriduqk.supabase.co';
 const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh5ZHZjcXRzcmNrZ2RzcmlkdXFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NTQxMzEsImV4cCI6MjEwMzEzMDEzMX0.9Hrhy00DqOfnvYtl5WQpPjOLwLldUAZoBcSvmG5CgHA';
-const INVITE_CODE = 'MASARU-SHOPEE';
+/* รหัสเชิญ 2 ระดับ — ตัวจริงตรวจที่ฐานข้อมูล (ฟังก์ชัน claim_profile)
+   ที่ใส่ไว้ตรงนี้แค่ช่วยบอกผู้ใช้ก่อนส่งเท่านั้น */
+const ROLES = {
+  head:  { code: 'MASARU-SHOPEE-HEAD', label: 'หัวหน้า Shopee',
+           d: 'ดูข้อมูลได้ทุกอย่าง + นำเข้า/ล้างข้อมูล + จัดการสิทธิ์' },
+  staff: { code: 'MASARU-SHOPEE',      label: 'Shopee',
+           d: 'ดูข้อมูลและส่งออก Excel ได้ แต่แก้ข้อมูลไม่ได้' }
+};
 
 /* ---------- helpers ---------- */
 const $  = (s, r = document) => r.querySelector(s);
@@ -106,7 +113,25 @@ const SB = {
       return true;
     } catch (e) { return false; }
   },
-  signOut(){ lsDel('session'); location.href = 'index.html'; },
+  signOut(){ lsDel('session'); lsDel('role'); cacheClear(); location.href = 'index.html'; },
+  role(){ return lsGet('role') || null; },
+  isHead(){ return SB.role() === 'head'; },
+  uid(){
+    const t = SB.token(); if (!t) return null;
+    try { return JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).sub; }
+    catch (e) { return null; }
+  },
+  /* ดึงสิทธิ์ของตัวเองจากฐานข้อมูล เรียกตอนเข้าสู่ระบบและตอนเปิดหน้าแรก */
+  async loadRole(){
+    const id = SB.uid();
+    if (!id) return null;
+    const r = await SB.req(`${SB_URL}/rest/v1/shopee_profiles?select=role&id=eq.${id}`, { headers: SB.headers() });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const role = j[0] ? j[0].role : null;
+    if (role) lsSet('role', role); else lsDel('role');
+    return role;
+  },
 
   async req(url, opt, retry){
     const r = await fetch(url, opt);
@@ -185,8 +210,11 @@ const MODULES = [
   { id: 'help',    file: 'help.html',    ic: '?', t: 'วิธีใช้งาน',       d: 'ขั้นตอนใช้งาน ไฟล์ที่ต้องอัป และวิธีอ่านตัวเลข' }
 ];
 
+function visibleModules(){
+  return MODULES.filter(m => !(m.id === 'import' && !SB.isHead()));
+}
 function shell(active, title, crumb){
-  const nav = MODULES.map(m =>
+  const nav = visibleModules().map(m =>
     `<a class="navlink ${m.id === active ? 'on' : ''}" href="${m.file}"><span class="ic">${m.ic}</span>${esc(m.t)}</a>`).join('');
   document.body.insertAdjacentHTML('afterbegin', `
     <div class="app">
@@ -198,6 +226,7 @@ function shell(active, title, crumb){
         <nav class="nav">${nav}</nav>
         <div class="side-foot">
           <div class="who" id="who">—</div>
+          <div class="who" id="whoRole" style="margin-bottom:8px"></div>
           <button class="btn gh sm" onclick="SB.signOut()">ออกจากระบบ</button>
         </div>
       </aside>
@@ -213,8 +242,15 @@ function shell(active, title, crumb){
       </div>
     </div>`);
   const w = $('#who'); if (w) w.textContent = SB.email() || '—';
+  const wr = $('#whoRole');
+  if (wr){
+    const r = SB.role();
+    wr.innerHTML = r
+      ? `<span class="chip ${r === 'head' ? 'g' : 'b'}">${esc(ROLES[r] ? ROLES[r].label : r)}</span>`
+      : `<span class="chip r">ยังไม่ได้ตั้งสิทธิ์</span>`;
+  }
   // โหลดหน้าอื่นไว้ล่วงหน้า กดสลับแล้วขึ้นทันที
-  MODULES.filter(m => m.id !== active).forEach(m => {
+  visibleModules().filter(m => m.id !== active).forEach(m => {
     const l = document.createElement('link');
     l.rel = 'prefetch'; l.href = m.file;
     document.head.appendChild(l);
@@ -231,6 +267,19 @@ async function hardRefresh(){
     toast('ดึงข้อมูลใหม่แล้ว', 'ok');
   } catch (e) { toast(e.message, 'err'); }
   if (b){ b.disabled = false; b.textContent = '↻ รีเฟรช'; }
+}
+function requireHead(){
+  if (!requireAuth()) return false;
+  if (!SB.isHead()){
+    $('#view').innerHTML = `<div class="panel"><div class="empty">
+      <div class="big">หน้านี้สำหรับหัวหน้า Shopee เท่านั้น</div>
+      <div>บัญชีของคุณมีสิทธิ์ระดับ "${esc(SB.role() ? (ROLES[SB.role()] ? ROLES[SB.role()].label : SB.role()) : 'ยังไม่ได้ตั้งสิทธิ์')}"
+        ดูข้อมูลและส่งออก Excel ได้ แต่นำเข้าหรือแก้ข้อมูลไม่ได้<br>
+        ถ้าต้องใช้งานส่วนนี้ ให้แจ้งหัวหน้าทีมเพื่อปรับสิทธิ์</div>
+      <br><a class="btn p" href="index.html">กลับหน้าหลัก</a></div></div>`;
+    return false;
+  }
+  return true;
 }
 function requireAuth(){
   if (!SB.token()){ location.href = 'index.html'; return false; }
