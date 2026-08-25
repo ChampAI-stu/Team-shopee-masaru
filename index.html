@@ -24,7 +24,14 @@ function loginScreen(mode){
     <div class="sub">${signup ? 'สร้างบัญชีใหม่สำหรับทีม Shopee' : 'ระบบข้อมูลทีม Shopee — เข้าสู่ระบบเพื่อใช้งาน'}</div>
     <div class="fld"><label>อีเมล</label><input id="em" type="email" autocomplete="username" placeholder="you@masaru.co.th"></div>
     <div class="fld"><label>รหัสผ่าน</label><input id="pw" type="password" autocomplete="${signup?'new-password':'current-password'}" placeholder="${signup?'อย่างน้อย 6 ตัวอักษร':'รหัสผ่าน'}"></div>
-    ${signup ? `<div class="fld"><label>รหัสเชิญของทีม</label><input id="iv" placeholder="ขอจากหัวหน้าทีม"></div>` : ''}
+    ${signup ? `
+    <div class="fld"><label>ระดับสิทธิ์</label>
+      <select id="rl" onchange="roleHint()" style="border:1px solid var(--line);border-radius:9px;padding:10px 12px">
+        <option value="staff">Shopee — ดูข้อมูลอย่างเดียว</option>
+        <option value="head">หัวหน้า Shopee — นำเข้าและจัดการข้อมูลได้</option>
+      </select>
+      <div id="rhint" style="font-size:11.5px;color:var(--muted)"></div></div>
+    <div class="fld"><label>รหัสเชิญของระดับที่เลือก</label><input id="iv" placeholder="ขอจากหัวหน้าทีม"></div>` : ''}
     <div id="msg" style="margin-bottom:12px"></div>
     <button class="btn p" id="go">${signup ? 'สร้างบัญชี' : 'เข้าสู่ระบบ'}</button>
     <div class="alt">${signup
@@ -33,6 +40,11 @@ function loginScreen(mode){
   </div></div>`;
   const msg = (t, k) => document.getElementById('msg').innerHTML =
     `<div class="${k === 'ok' ? 'okbox' : 'err'}">${esc(t)}</div>`;
+  window.roleHint = () => {
+    const r = document.getElementById('rl').value;
+    document.getElementById('rhint').textContent = ROLES[r].d;
+  };
+  if (signup) roleHint();
   const submit = async () => {
     const btn = document.getElementById('go');
     const email = document.getElementById('em').value.trim();
@@ -41,14 +53,27 @@ function loginScreen(mode){
     btn.disabled = true; btn.textContent = 'กำลังดำเนินการ…';
     try {
       if (signup){
-        if (document.getElementById('iv').value.trim() !== INVITE_CODE)
-          throw new Error('รหัสเชิญไม่ถูกต้อง — ขอรหัสจากหัวหน้าทีม');
+        const want = document.getElementById('rl').value;
+        const code = document.getElementById('iv').value.trim();
+        if (code !== ROLES[want].code)
+          throw new Error(`รหัสเชิญไม่ตรงกับระดับ "${ROLES[want].label}" — ขอรหัสจากหัวหน้าทีม`);
         await SB.signUp(email, pw);
-        msg('สร้างบัญชีแล้ว หากระบบเปิดยืนยันอีเมล ให้กดลิงก์ในอีเมลก่อนเข้าสู่ระบบ', 'ok');
-        btn.disabled = false; btn.textContent = 'สร้างบัญชี';
-        return;
+        try {
+          await SB.signIn(email, pw);
+          const role = await SB.rpc('claim_profile', { p_code: code });
+          lsSet('role', role);
+          location.reload();
+          return;
+        } catch (e2) {
+          // ระบบเปิดยืนยันอีเมลอยู่ จึงยังเข้าสู่ระบบทันทีไม่ได้
+          msg('สร้างบัญชีแล้ว — กดลิงก์ยืนยันในอีเมล แล้วกลับมาเข้าสู่ระบบ ระบบจะถามรหัสเชิญอีกครั้งเพื่อตั้งสิทธิ์', 'ok');
+          btn.disabled = false; btn.textContent = 'สร้างบัญชี';
+          return;
+        }
       }
       await SB.signIn(email, pw);
+      const role = await SB.loadRole();
+      if (!role){ claimScreen(); return; }
       location.reload();
     } catch (e) {
       msg(e.message);
@@ -57,6 +82,37 @@ function loginScreen(mode){
   };
   document.getElementById('go').onclick = submit;
   document.getElementById('pw').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+}
+
+/* ================= ตั้งสิทธิ์ครั้งแรก (บัญชีที่ยังไม่มี role) ================= */
+function claimScreen(){
+  document.getElementById('root').innerHTML = `
+  <div class="login-wrap"><div class="login">
+    <div class="mark">MASARU<span>·</span>Shopee</div>
+    <div class="sub">บัญชีนี้ยังไม่ได้ตั้งระดับสิทธิ์ — ใส่รหัสเชิญเพื่อเริ่มใช้งาน</div>
+    <div class="fld"><label>ระดับสิทธิ์</label>
+      <select id="rl2" style="border:1px solid var(--line);border-radius:9px;padding:10px 12px">
+        <option value="staff">Shopee — ดูข้อมูลอย่างเดียว</option>
+        <option value="head">หัวหน้า Shopee — นำเข้าและจัดการข้อมูลได้</option>
+      </select></div>
+    <div class="fld"><label>รหัสเชิญ</label><input id="iv2" placeholder="ขอจากหัวหน้าทีม"></div>
+    <div id="msg2" style="margin-bottom:12px"></div>
+    <button class="btn p" id="go2">ยืนยัน</button>
+    <div class="alt"><a onclick="SB.signOut()">ออกจากระบบ</a></div>
+  </div></div>`;
+  document.getElementById('go2').onclick = async () => {
+    const b = document.getElementById('go2');
+    b.disabled = true; b.textContent = 'กำลังตรวจสอบ…';
+    try {
+      const role = await SB.rpc('claim_profile', { p_code: document.getElementById('iv2').value.trim() });
+      lsSet('role', role);
+      location.reload();
+    } catch (e) {
+      document.getElementById('msg2').innerHTML =
+        `<div class="err">${esc(/รหัสเชิญ/.test(e.message) ? 'รหัสเชิญไม่ถูกต้อง' : e.message)}</div>`;
+      b.disabled = false; b.textContent = 'ยืนยัน';
+    }
+  };
 }
 
 /* ================= หน้าหลัก ================= */
@@ -134,7 +190,7 @@ function renderHome(){
     import:  ['อัปเดตล่าสุด', RANGE.sales && RANGE.sales.dmax ? thDate(RANGE.sales.dmax) : '—'],
     help:    ['เปิดครั้งแรก อ่านตรงนี้', 'คู่มือ 4 หัวข้อ']
   };
-  const cards = MODULES.filter(m => m.id !== 'index').map(m => `
+  const cards = visibleModules().filter(m => m.id !== 'index').map(m => `
     <a class="mod" href="${m.file}">
       <div class="mic">${m.ic}</div>
       <h4>${esc(m.t)}</h4><p>${esc(m.d)}</p>
@@ -198,6 +254,9 @@ function onFilterChange(){ renderFilters(); loadHome(); }
 
 (async function boot(){
   if (!SB.token()){ loginScreen('signin'); return; }
+  let role = SB.role();
+  try { role = (await SB.loadRole()) || role; } catch (e) { /* เน็ตสะดุด ใช้สิทธิ์ที่จำไว้ไปก่อน */ }
+  if (!role){ claimScreen(); return; }
   shell('index', 'หน้าหลัก', '');
   try {
     await loadDims();
@@ -208,8 +267,10 @@ function onFilterChange(){ renderFilters(); loadHome(); }
   renderFilters();
   if (!RANGE.sales || !RANGE.sales.rows){
     $('#view').innerHTML = emptyState('ยังไม่มีข้อมูลในระบบ',
-      'อัปโหลดไฟล์ Excel ยอดขาย ค่าใช้จ่าย และรายรับนอกระบบ เพื่อเริ่มใช้งาน — ถ้ายังไม่แน่ใจว่าต้องอัปไฟล์ไหน อ่านหน้าวิธีใช้งานก่อนได้',
-      'ไปหน้านำเข้าข้อมูล');
+      SB.isHead()
+        ? 'อัปโหลดไฟล์ Excel ยอดขาย ค่าใช้จ่าย และรายรับนอกระบบ เพื่อเริ่มใช้งาน — ถ้ายังไม่แน่ใจว่าต้องอัปไฟล์ไหน อ่านหน้าวิธีใช้งานก่อนได้'
+        : 'รอหัวหน้า Shopee อัปโหลดไฟล์เข้าระบบก่อน แล้วกลับมาดูได้เลย',
+      SB.isHead() ? 'ไปหน้านำเข้าข้อมูล' : '');
     return;
   }
   loadHome();
